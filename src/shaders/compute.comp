@@ -21,36 +21,171 @@ struct Blade {
     vec4 up;
 };
 
-// TODO: Add bindings to:
 // 1. Store the input blades
-// 2. Write out the culled blades
-// 3. Write the total number of blades remaining
+layout(set = 2, binding = 0, std430) restrict readonly buffer InputBlades {
+    Blade blades[];
+} inputBlades;
 
-// The project is using vkCmdDrawIndirect to use a buffer as the arguments for a draw call
-// This is sort of an advanced feature so we've showed you what this buffer should look like
-//
-// layout(set = ???, binding = ???) buffer NumBlades {
-// 	  uint vertexCount;   // Write the number of blades remaining here
-// 	  uint instanceCount; // = 1
-// 	  uint firstVertex;   // = 0
-// 	  uint firstInstance; // = 0
-// } numBlades;
+// 2. Write out the culled blades
+layout(set = 2, binding = 1, std430) restrict writeonly buffer CulledBlades {
+    Blade blades[];
+} culledBlades;
+
+// 3. Write the total number of blades remaining
+layout(set = 2, binding = 2, std430) restrict buffer NumBlades {
+    uint vertexCount;   // Write the number of blades remaining here
+    uint instanceCount; // = 1
+    uint firstVertex;   // = 0
+    uint firstInstance; // = 0
+} numBlades;
 
 bool inBounds(float value, float bounds) {
     return (value >= -bounds) && (value <= bounds);
 }
 
 void main() {
-	// Reset the number of blades to 0
-	if (gl_GlobalInvocationID.x == 0) {
-		// numBlades.vertexCount = 0;
-	}
-	barrier(); // Wait till all threads reach this point
+    // Reset the number of blades to 0
+    if (gl_GlobalInvocationID.x == 0) {
+        numBlades.vertexCount = 0;
+    }
+    barrier(); // Wait till all threads reach this point
 
-    // TODO: Apply forces on every blade and update the vertices in the buffer
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= inputBlades.blades.length()) {
+        return;
+    }
 
-	// TODO: Cull blades that are too far away or not in the camera frustum and write them
-	// to the culled blades buffer
-	// Note: to do this, you will need to use an atomic operation to read and update numBlades.vertexCount
-	// You want to write the visible blades to the buffer without write conflicts between threads
+    Blade blade = inputBlades.blades[index];
+    
+    // Extract blade properties
+    vec3 v0 = blade.v0.xyz;
+    vec3 v1 = blade.v1.xyz;
+    vec3 v2 = blade.v2.xyz;
+    vec3 up = blade.up.xyz;
+    
+    float height = blade.v1.w;
+    float width = blade.v2.w;
+    float stiffness = blade.up.w;
+    float direction = blade.v0.w;
+    
+    // Store initial position of v2 for recovery force
+    vec3 iv2 = v0 + height * up;
+    
+    // Apply forces on every blade and update the vertices in the buffer
+    
+    // Gravity forces
+    vec4 D = vec4(0.0, -1.0, 0.0, 9.8); // Gravity direction and acceleration
+    vec3 gE = normalize(D.xyz) * D.w;
+    
+    // Front gravity (perpendicular to blade width)
+    vec3 front = normalize(cross(up, vec3(cos(direction), 0, sin(direction))));
+    vec3 gF = 0.25 * length(gE) * front;
+    vec3 g = gE + gF;
+    
+    // Recovery force (Hooke's law)
+    vec3 r = (iv2 - v2) * stiffness;
+    
+    // Wind force
+    vec3 windDirection = vec3(
+        sin(totalTime * 0.7) * 0.5,
+        0.0,
+        cos(totalTime * 0.5) * 0.3
+    );
+    
+    // Wind alignment
+    vec3 bladeDir = normalize(v2 - v0);
+    float directionalAlignment = 1.0 - abs(dot(normalize(windDirection), bladeDir));
+    float heightRatio = dot(v2 - v0, up) / height;
+    float windAlignment = directionalAlignment * heightRatio;
+    vec3 w = windDirection * windAlignment;
+    
+    // Apply total force: delta = (r + g + w) * deltaTime
+    vec3 totalForce = (r + g + w) * deltaTime;
+    vec3 newV2 = v2 + totalForce;
+    
+    // State validation - keep v2 above ground
+    newV2 = newV2 - up * min(dot(up, newV2 - v0), 0.0);
+    
+    // Update v1 position to maintain proper curvature
+    float lproj = length(newV2 - v0 - up * dot(newV2 - v0, up));
+    vec3 newV1 = v0 + height * up * max(1.0 - lproj/height, 0.05 * max(lproj/height, 1.0));
+    
+    // Correct blade length
+    float L0 = length(newV2 - v0);
+    float L1 = length(newV1 - v0) + length(newV2 - newV1);
+    float L = (2.0 * L0 + L1) / 3.0;
+    float lengthRatio = height / L;
+    newV1 = v0 + lengthRatio * (newV1 - v0);
+    newV2 = newV1 + lengthRatio * (newV2 - newV1);
+    
+    // Cull blades that are too far away or not in the camera frustum
+    
+    // Get camera position
+    mat4 invView = inverse(camera.view);
+    vec3 cameraPos = invView[3].xyz;
+    vec3 viewDir = normalize(cameraPos - v0);
+    
+    bool shouldCull = false;
+    
+    // Orientation culling
+    vec3 bladeWidth = normalize(cross(up, normalize(newV2 - v0)));
+    if (abs(dot(viewDir, bladeWidth)) > 0.9) {
+        shouldCull = true;
+    }
+    
+    // View-frustum culling
+    if (!shouldCull) {
+        vec3 midpoint = 0.25 * v0 + 0.5 * newV1 + 0.25 * newV2;
+        
+        // Test v0, v2, and midpoint against frustum
+        vec4 points[3] = {
+            camera.proj * camera.view * vec4(v0, 1.0),
+            camera.proj * camera.view * vec4(newV2, 1.0),
+            camera.proj * camera.view * vec4(midpoint, 1.0)
+        };
+        
+        bool anyInFrustum = false;
+        for (int i = 0; i < 3; i++) {
+            vec3 ndc = points[i].xyz / points[i].w;
+            float tolerance = 0.1;
+            if (inBounds(ndc.x, 1.0 + tolerance) && 
+                inBounds(ndc.y, 1.0 + tolerance) && 
+                inBounds(ndc.z, 1.0)) {
+                anyInFrustum = true;
+                break;
+            }
+        }
+        if (!anyInFrustum) {
+            shouldCull = true;
+        }
+    }
+    
+    // Distance culling
+    if (!shouldCull) {
+        float distance = length(cameraPos - v0);
+        float maxDistance = 50.0;
+        int numLevels = 5;
+        
+        if (distance > maxDistance) {
+            shouldCull = true;
+        } else {
+            int level = int((distance / maxDistance) * float(numLevels));
+            int bladesInLevel = numLevels - level;
+            if ((index % numLevels) >= bladesInLevel) {
+                shouldCull = true;
+            }
+        }
+    }
+    
+    // Write to output if not culled
+    if (!shouldCull) {
+        // Use atomic operation to get unique output index
+        uint outputIndex = atomicAdd(numBlades.vertexCount, 1);
+        
+        // Write the updated blade to output buffer
+        culledBlades.blades[outputIndex].v0 = vec4(v0, direction);
+        culledBlades.blades[outputIndex].v1 = vec4(newV1, height);
+        culledBlades.blades[outputIndex].v2 = vec4(newV2, width);
+        culledBlades.blades[outputIndex].up = vec4(up, stiffness);
+    }
 }
