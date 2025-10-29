@@ -3,53 +3,62 @@
 
 layout(vertices = 1) out;
 
+// set = 0 : camera
 layout(set = 0, binding = 0) uniform CameraBufferObject {
     mat4 view;
     mat4 proj;
 } camera;
 
-// Input from vertex shader
-layout(location = 0) in vec4 v0_in[];
-layout(location = 1) in vec4 v1_in[];
-layout(location = 2) in vec4 v2_in[];
-layout(location = 3) in vec4 up_in[];
+in gl_PerVertex {
+    vec4 gl_Position;
+} gl_in[];
 
-// Output to tessellation evaluation shader
-layout(location = 0) out vec4 v0_out[];
-layout(location = 1) out vec4 v1_out[];
-layout(location = 2) out vec4 v2_out[];
-layout(location = 3) out vec4 up_out[];
+out gl_PerVertex {
+    vec4 gl_Position;
+} gl_out[];
 
-void main() {
-    // Don't move the origin location of the patch
+// Pass-through of control points to TES
+layout(location = 0) in  vec4 in_p0[];
+layout(location = 1) in  vec4 in_p1[];
+layout(location = 2) in  vec4 in_p2[];
+layout(location = 3) in  vec4 in_up[];
+
+layout(location = 0) out vec4 t_p0[];
+layout(location = 1) out vec4 t_p1[];
+layout(location = 2) out vec4 t_p2[];
+layout(location = 3) out vec4 t_up[];
+
+void main()
+{
+    // Pass-through
     gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
 
-    // Pass through all Blade data to tessellation evaluation shader
-    v0_out[gl_InvocationID] = v0_in[gl_InvocationID];
-    v1_out[gl_InvocationID] = v1_in[gl_InvocationID];
-    v2_out[gl_InvocationID] = v2_in[gl_InvocationID];
-    up_out[gl_InvocationID] = up_in[gl_InvocationID];
+    t_p0[gl_InvocationID] = in_p0[gl_InvocationID];
+    t_p1[gl_InvocationID] = in_p1[gl_InvocationID];
+    t_p2[gl_InvocationID] = in_p2[gl_InvocationID];
+    t_up[gl_InvocationID] = in_up[gl_InvocationID];
 
-    // Set tessellation levels (only done by first invocation)
+    // Distance-based tess level (smooth, bounded)
+    vec3 camPos = inverse(camera.view)[3].xyz;
+    vec3 root   = in_p0[gl_InvocationID].xyz;
+    vec3 upN    = normalize(in_up[gl_InvocationID].xyz);
+    vec3 viewVec= root - camPos - upN * dot(root - camPos, upN);
+    float dist  = max(length(viewVec), 1e-3);
+
+    const float nearRef = 6.0;
+    const float minTess = 2.0;
+    const float maxTess = 8.0;
+
+    float level = clamp(nearRef / dist, 0.0, 1.0);
+    float tess  = mix(minTess, maxTess, level);
+
+    // Set tess levels once per patch (invocation 0)
     if (gl_InvocationID == 0) {
-        // Calculate distance to camera for LOD
-        vec3 worldPos = v0_in[0].xyz;
-        vec3 cameraPos = inverse(camera.view)[3].xyz;
-        float distance = length(cameraPos - worldPos);
-        
-        // Adaptive tessellation based on distance
-        float maxDistance = 50.0;
-        float tessLevel = mix(8.0, 2.0, clamp(distance / maxDistance, 0.0, 1.0));
-        
-        // Tessellation levels for quad patch
-        // Outer levels: left, bottom, right, top
-        gl_TessLevelOuter[0] = tessLevel;  // Left edge (along height)
-        gl_TessLevelOuter[1] = 2.0;       // Bottom edge (along width) - minimal
-        gl_TessLevelOuter[2] = tessLevel;  // Right edge (along height)
-        gl_TessLevelOuter[3] = 2.0;       // Top edge (along width) - minimal
-        
-        // Inner levels: horizontal, vertical subdivision
-        gl_TessLevelInner[0] = 2.0;       // Horizontal (width) - minimal
-        gl_TessLevelInner[1] = tessLevel; // Vertical (height) - more detail for curvature
+        gl_TessLevelInner[0] = tess;
+        gl_TessLevelInner[1] = tess;
+        gl_TessLevelOuter[0] = tess;
+        gl_TessLevelOuter[1] = tess;
+        gl_TessLevelOuter[2] = tess;
+        gl_TessLevelOuter[3] = tess;
     }
 }

@@ -1,34 +1,42 @@
-
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 
-layout(set = 1, binding = 0) uniform ModelBufferObject {
+// set = 1 : per-model transform (for blades bound to a model instance)
+layout(set = 1, binding = 0) uniform ModelUBO {
     mat4 model;
-};
+} modelUBO;
 
-// Input attributes from Blade struct
-layout(location = 0) in vec4 v0;  // Position and direction
-layout(location = 1) in vec4 v1;  // Bezier point and height
-layout(location = 2) in vec4 v2;  // Physical model guide and width
-layout(location = 3) in vec4 up;  // Up vector and stiffness coefficient
+// Vertex attributes for a single patch (one blade)
+// Matches Blade::getAttributeDescriptions(): 4x vec4
+layout(location = 0) in vec4 in_p0; // xyz = v0, w = orientation
+layout(location = 1) in vec4 in_p1; // xyz = v1, w = height
+layout(location = 2) in vec4 in_p2; // xyz = v2, w = width
+layout(location = 3) in vec4 in_up; // xyz = up, w = stiffness
 
-// Output to tessellation control shader
-layout(location = 0) out vec4 v0_out;
-layout(location = 1) out vec4 v1_out;
-layout(location = 2) out vec4 v2_out;
-layout(location = 3) out vec4 up_out;
+// Pass to tessellation (world space control points and packed scalars)
+layout(location = 0) out vec4 out_p0;
+layout(location = 1) out vec4 out_p1;
+layout(location = 2) out vec4 out_p2;
+layout(location = 3) out vec4 out_up;
 
 out gl_PerVertex {
     vec4 gl_Position;
 };
 
-void main() {
-	 // Pass through all Blade data to tessellation control shader
-    v0_out = v0;
-    v1_out = v1;
-    v2_out = v2;
-    up_out = up;
-    
-    // Set position for tessellation (use v0 which contains the blade base position)
-    gl_Position = model * vec4(v0.xyz, 1.0);
+void main()
+{
+    // Transform control points and up-vector to world space
+    vec4 wp0 = modelUBO.model * vec4(in_p0.xyz, 1.0);
+    vec4 wp1 = modelUBO.model * vec4(in_p1.xyz, 1.0);
+    vec4 wp2 = modelUBO.model * vec4(in_p2.xyz, 1.0);
+    vec3 wup = normalize((modelUBO.model * vec4(in_up.xyz, 0.0)).xyz);
+
+    // Preserve packed scalars in .w
+    out_p0 = vec4(wp0.xyz, in_p0.w); // orientation
+    out_p1 = vec4(wp1.xyz, in_p1.w); // height
+    out_p2 = vec4(wp2.xyz, in_p2.w); // width
+    out_up = vec4(wup, in_up.w);     // stiffness
+
+    // Patch origin position (used by TCS via gl_in)
+    gl_Position = wp0;
 }
