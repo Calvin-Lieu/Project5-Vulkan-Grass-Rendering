@@ -24,15 +24,25 @@ void Scene::AddBlades(Blades* blades) {
 }
 
 void Scene::UpdateTime() {
-    high_resolution_clock::time_point currentTime = high_resolution_clock::now();
-    duration<float> nextDeltaTime = duration_cast<duration<float>>(currentTime - startTime);
-    startTime = currentTime;
+    using namespace std::chrono;
 
-    time.deltaTime = nextDeltaTime.count();
-    time.totalTime += time.deltaTime;
+    static bool first = true;
+    static high_resolution_clock::time_point lastTime = high_resolution_clock::now();
+
+    high_resolution_clock::time_point currentTime = high_resolution_clock::now();
+    duration<float> nextDeltaTime = duration_cast<duration<float>>(currentTime - lastTime);
+    lastTime = currentTime;
+
+    float dt = nextDeltaTime.count();
+    dt = (dt < 0.0f ? 0.0f : (dt > 0.033f ? 0.033f : dt)); // clamp
+    static float smoothedDt = dt;
+    smoothedDt = 0.9f * smoothedDt + 0.1f * dt; // exponential smoothing
+    time.deltaTime = smoothedDt;
+    time.totalTime += smoothedDt;
 
     memcpy(mappedData, &time, sizeof(Time));
 }
+
 
 VkBuffer Scene::GetTimeBuffer() const {
     return timeBuffer;
