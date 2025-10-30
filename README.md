@@ -68,8 +68,7 @@ Culling reduces GPU workload by eliminating blades that would have little or no 
 
 ### 1. Orientation Culling
 
-When a blade’s face is nearly **parallel to the camera view direction**, it contributes less than a pixel’s width to the frame.  
-Those blades are removed to prevent aliasing and wasted shading effort.
+When a blade’s face is nearly **parallel to the camera view direction**, it contributes less than a pixel’s width to the frame. Those blades are removed to prevent aliasing and wasted shading effort.
 
 <img src="img/orientationDemo.gif" width="600" />
 
@@ -77,9 +76,7 @@ Those blades are removed to prevent aliasing and wasted shading effort.
 
 ### 2. View-Frustum Culling
 
-The visibility of each blade is tested using three representative Bezier positions (`v₀`, `v₂`, and midpoint `m = ¼v₀ + ½v₁ + ¼v₂`).  
-If all are outside the camera’s clip space (within tolerance), the blade is excluded.  
-This ensures only visible geometry enters tessellation.
+The visibility of each blade is tested using three representative Bezier positions (`v₀`, `v₂`, and midpoint `m = ¼v₀ + ½v₁ + ¼v₂`). If all are outside the camera’s clip space (within tolerance), the blade is excluded. This ensures only visible geometry enters tessellation.
 
 ### With Frustum
 <img src="img/frustumDemo.gif" width="600" />
@@ -91,8 +88,7 @@ This ensures only visible geometry enters tessellation.
 
 ### 3. Distance Culling
 
-Beyond a configurable maximum distance, blades are culled based on their projected size and distance bucket.  
-Near blades are always retained, while those farther away are removed stochastically, maintaining perceptual density while cutting vertex load.
+Beyond a configurable maximum distance, blades are culled based on their projected size and distance bucket. Near blades are always retained, while those farther away are removed stochastically, maintaining perceptual density while cutting vertex load.
 
 <img src="img/distanceDemo.gif" width="600" />
 
@@ -126,14 +122,6 @@ Even as the count increases exponentially, GPU utilization remains efficient due
 Performance improvement from each culling method and their combined effect:
 
 <img src="img/cullinggraph.png" width="500" />
-
-| Culling Method | FPS |
-|-----------|-----|
-| None | 92 |
-| Orientation | 500 |
-| Frustum | 93 |
-| Distance | 360 |
-| All | 830 |
 
 Note that the relative benefits of each culling method vary extremely depending on the exact camera orientation of the render. The position that was used is shown below. Orientation and distance culling deliver the greatest gains, while frustum culling’s impact depends strongly on camera coverage. Combining all methods yields a substantial reduction in per-frame cost without visual loss.
 
