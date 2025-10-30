@@ -42,7 +42,7 @@ This representation enables continuous deformation with minimal data per blade.
 
 ---
 
-### 🌪️ Physics Simulation (Compute Shader)
+### Physics Simulation (Compute Shader)
 
 Grass motion is governed by forces applied each frame to the tip point `v₂`:
 
